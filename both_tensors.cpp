@@ -405,9 +405,6 @@ namespace bru {
 		friend class host_tensor<double>;
 		operator host_tensor<double>();
 
-		/*
-		Debugging tool
-
 		void print_tree(event_node *node)
 		{
 			if(node) {
@@ -429,6 +426,8 @@ namespace bru {
 			std::cout << "\n";
 		}
 
+		/*
+		Debugging tool
 		*/
 
 		//Constructors
@@ -732,6 +731,7 @@ namespace bru {
 			ten.k_sprod->setArg(2, 1/ten.m_dx/ten.m_dx);
 			ten.queue->enqueueNDRangeKernel(*ten.k_sprod, cl::NullRange, ret.m_global, ret.m_local, &waitlist, ret.m_events->event_pointer('w'));
 
+			ten.m_events->push_event('r', ret.m_events->write);
 			ret.m_dx=ten.m_dx;
 
 			return ret;
@@ -779,10 +779,13 @@ namespace bru {
 		void flush(char kind='a')
 		{
 			m_events->wait(kind);
+			if(kind=='a' || kind=='r') m_events->bRead=0;
+			if(kind=='a' || kind=='w') m_events->bWrite=0;
 			if(kind=='a') {
 				m_events->destruct();
 				m_events->children=NULL;
 			} else m_events->purge();
+			m_events->size=0;
 		}
 
 	};
@@ -1301,22 +1304,80 @@ namespace bru {
 
 }
 
+//WAVE THINGIES
+
+void output_matrix(std::ostream &out, bru::device_tensor<double> d_mat)
+{
+	int I=d_mat.shape()[0];
+	int J=d_mat.shape()[1];
+	bru::host_tensor<double> h_mat=d_mat;
+	for(int i=0; i<I; i++) for(int j=0; j<J; j++) out << h_mat[i][j] << (j==J-1?"\n":"\t");
+}
+
+template<typename T>
+void rk4_step(T &y, double t, double dt, std::function<T(T, double)> f)
+{
+	T y_0=y, k;
+
+	k=dt/2*f(y_0, t); //		k1 / 2
+	y+=(1.0/3)*k;
+	k=dt*f(y_0+k, t+dt/2); //	k2
+	y+=(1.0/3)*k;
+	k=dt*f(y_0+.5*k, t+dt/2); //	k3
+	y+=(1.0/3)*k;
+	k=dt*f(y+k, t+dt);
+	y+=(1.0/3)*k;
+	y.flush();
+}
+
+std::function<bru::device_tensor<double>(bru::device_tensor<double>, double)> wave_eq(bru::device_tensor<double> &mask, double speed=1)
+{
+	return [mask, speed] (bru::device_tensor<double> phi, double t)->bru::device_tensor<double> {
+		bru::device_tensor<double> ret(phi.shape());
+		ret[0]=phi[1];
+		ret[1]=speed*speed*laplacian(phi[0]);
+		ret[1]*=mask;
+		return ret;
+	};
+}
 
 int main()
 {
 	using namespace bru;
 	using namespace std;
-	int len=1000;
+	int len=101;
 	int size=len*len;
-	double dx=1/len;
+	double dx=1.0/len, dt=dx;
 
 	device_tensor<double> phi({2, len, len}, 0);
 	phi.set_dx(dx);
 
 	device_tensor<double> mask({len, len}, 1);
+
+	//Field's original condition
+	host_tensor<double> phi0=phi[0];
+	double radius=0.5;
+	auto f=[](double x)->double{  return x*x>=0.25?0:exp(4+1/(x-0.5)-1/(x+0.5)); };
+	for(int i=0; i<len; i++) for(int j=0; j<len; j++) phi0[i][j]=f(sqrt(((i+0.5)*dx-0.5)*((i+0.5)*dx-0.5)+((j+0.5)*dx-0.5)*((j+0.5)*dx-0.5))/radius);
+	phi[0]=phi0;
+
 	mask[0]=mask[-1]=device_tensor<double>(vector<int>{len}, 0);
 	mask[1][0]=mask[1][-1]=device_tensor<double>(vector<int>{}, 0);
 	for(int i=2; i<len-1; i++) mask[i]=mask[1];
+
+	auto waveq=wave_eq(mask);
+	std::ofstream outf;
+	int spf=100/(101*dx); //steps per frame 
+	int frames=1000;
+	std::cout << "Frames: " << frames << "\tSteps per frame: " << spf << "\n";
+	for(int i=0; i<frames*spf; i++) {
+		if(i%spf==0) {
+			outf.open(std::to_string(i/spf));
+			output_matrix(outf, phi[0]);
+			outf.close();
+		}
+		rk4_step(phi, i*dt, dt, waveq);
+	}
 
 	return 0;
 }
