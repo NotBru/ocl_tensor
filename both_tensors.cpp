@@ -802,7 +802,7 @@ namespace bru {
 			k_to_rgba->setArg(3, max);
 
 			std::vector<cl::Event> waitlist=m_events->gen_waitlist('w');
-			queue->enqueueNDRangeKernel(k_to_rgba, cl::NullRange, m_global, m_local, &waitlist, m_events->event_pointer('w'));
+			queue->enqueueNDRangeKernel(*k_to_rgba, cl::NullRange, m_global, m_local, &waitlist, m_events->event_pointer('w'));
 			return ret;
 		}
 

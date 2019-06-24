@@ -89,7 +89,7 @@ void double_srdiv(__global double *target, __global double *A, const double k)
 __kernel
 void to_rgba(__global float *rgba, __global double *source, const double min, const double max)
 {
-	int i=get_device_id(0);
+	int i=get_global_id(0);
 	rgba[4*i+3]=1;
 	double q=2*(source[i]-min)/(max-min)-1;
 	if(q<=1) {
