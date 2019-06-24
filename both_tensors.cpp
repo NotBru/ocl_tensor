@@ -123,6 +123,7 @@ namespace bru {
 				kernels[default_dev[0]]["double_srdiff"]=Kernel(*programs[default_dev[0]], "double_srdiff");
 				kernels[default_dev[0]]["double_srdiv"]=Kernel(*programs[default_dev[0]], "double_srdiv");
 				kernels[default_dev[0]]["double_sum_second_deriv"]=Kernel(*programs[default_dev[0]], "double_sum_second_deriv");
+				kernels[default_dev[0]]["to_rgba"]=Kernel(*programs[default_dev[0]], "to_rgba");
 
 				platform_init[default_dev[0]]=1;
 				device_init[default_dev[0]][default_dev[1]]=1;
@@ -276,6 +277,7 @@ namespace bru {
 		cl::Kernel *k_srdiff=&kernels[devid[0]]["double_srdiff"];
 		cl::Kernel *k_srdiv=&kernels[devid[0]]["double_srdiv"];
 		cl::Kernel *k_sum_second_deriv=&kernels[devid[0]]["double_sum_second_deriv"];
+		cl::Kernel *k_to_rgba=&kernels[devid[0]]["to_rgba"];
 
 		int m_type=0;
 		int *m_shape=NULL;
@@ -383,6 +385,7 @@ namespace bru {
 			ret.m_parent=this;
 			ret.m_data_zero=m_data_zero;
 			ret.m_data_offset=m_data_offset+i*sizeof(double)*elems;
+			ret.m_global=elems;
 
 			if(!m_events->children) {
 				m_events->construct(m_shape[0]);
@@ -786,6 +789,21 @@ namespace bru {
 				m_events->children=NULL;
 			} else m_events->purge();
 			m_events->size=0;
+		}
+
+		cl::Buffer RGBA_buffer(const double min, const double max)
+		{
+			if(m_type!=2) return cl::Buffer;
+			cl::Buffer ret(*context, CL_MEM_READ_WRITE, 4*m_elems*sizeof(float));
+
+			k_to_rgba->setArg(0, ret);
+			k_to_rgba->setArg(1, m_data);
+			k_to_rgba->setArg(2, min);
+			k_to_rgba->setArg(3, max);
+
+			std::vector<cl::Event> waitlist=m_events->gen_waitlist('w');
+			queue->enqueueNDRangeKernel(k_to_rgba, cl::NullRange, m_global, m_local, &waitlist, m_events->event_pointer('w'));
+			return ret;
 		}
 
 	};
@@ -1330,13 +1348,13 @@ void rk4_step(T &y, double t, double dt, std::function<T(T, double)> f)
 	y.flush();
 }
 
-std::function<bru::device_tensor<double>(bru::device_tensor<double>, double)> wave_eq(bru::device_tensor<double> &mask, double speed=1)
+std::function<bru::device_tensor<double>(bru::device_tensor<double>, double)> wave_eq(bru::device_tensor<double> mask, double speed=1)
 {
 	return [mask, speed] (bru::device_tensor<double> phi, double t)->bru::device_tensor<double> {
 		bru::device_tensor<double> ret(phi.shape());
-		ret[0]=phi[1];
+		ret[0]=phi[1]; //TODO: WHY T.F. doesn't the in-place operation work
+		ret[0]*=mask;
 		ret[1]=speed*speed*laplacian(phi[0]);
-		ret[1]*=mask;
 		return ret;
 	};
 }
@@ -1345,14 +1363,13 @@ int main()
 {
 	using namespace bru;
 	using namespace std;
+
 	int len=101;
 	int size=len*len;
 	double dx=1.0/len, dt=dx;
 
 	device_tensor<double> phi({2, len, len}, 0);
 	phi.set_dx(dx);
-
-	device_tensor<double> mask({len, len}, 1);
 
 	//Field's original condition
 	host_tensor<double> phi0=phi[0];
@@ -1361,16 +1378,25 @@ int main()
 	for(int i=0; i<len; i++) for(int j=0; j<len; j++) phi0[i][j]=f(sqrt(((i+0.5)*dx-0.5)*((i+0.5)*dx-0.5)+((j+0.5)*dx-0.5)*((j+0.5)*dx-0.5))/radius);
 	phi[0]=phi0;
 
+	/*
+	device_tensor<double> mask({len, len}, 1);
 	mask[0]=mask[-1]=device_tensor<double>(vector<int>{len}, 0);
 	mask[1][0]=mask[1][-1]=device_tensor<double>(vector<int>{}, 0);
 	for(int i=2; i<len-1; i++) mask[i]=mask[1];
+	*/
+
+	host_tensor<double> mask=device_tensor<double>({len, len}, 1);
+	for(int i=0; i<len; i++) for(int j=0; j<len; j++) if(((i+0.5)*dx-0.5)*((i+0.5)*dx-0.5)+((j+0.5)*dx-0.5)*((j+0.5)*dx-0.5)>=0.23) mask[i][j]=0;
 
 	auto waveq=wave_eq(mask);
 	std::ofstream outf;
 	int spf=100/(101*dx); //steps per frame 
-	int frames=1000;
+	int frames=100;
 	std::cout << "Frames: " << frames << "\tSteps per frame: " << spf << "\n";
 	for(int i=0; i<frames*spf; i++) {
+		//TODO: use for loop for generating frames instead of outf
+		//device_tensor<double>::to_rgba(-1, 1) should return the buffer in float RGBA for each frame
+		//call rk4_step.flush() before plotting to make sure the buffer has finished generating
 		if(i%spf==0) {
 			outf.open(std::to_string(i/spf));
 			output_matrix(outf, phi[0]);

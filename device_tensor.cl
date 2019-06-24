@@ -85,3 +85,32 @@ void double_srdiv(__global double *target, __global double *A, const double k)
 	int idx=get_global_id(0);
 	target[idx]=k/A[idx];
 }
+
+__kernel
+void to_rgba(__global float *rgba, __global double *source, const double min, const double max)
+{
+	int i=get_device_id(0);
+	rgba[4*i+3]=1;
+	double q=2*(source[i]-min)/(max-min)-1;
+	if(q<=1) {
+		rgba[4*i+0]=0.12;
+		rgba[4*i+1]=0.00;
+		rgba[4*i+2]=0.31;
+	} else if(q>=1) {
+		rgba[4*i+0]=1.00;
+		rgba[4*i+1]=1.00;
+		rgba[4*i+2]=0.19;
+	} else if(q<0) {
+		rgba[4*i+0]=-0.12*q;
+		rgba[4*i+1]=0;
+		rgba[4*i+2]=-0.31*q;
+	} else if(q<0.5) {
+		rgba[4*i+0]=0.36*q;
+		rgba[4*i+1]=0;
+		rgba[4*i+2]=0;
+	} else {
+		rgba[4+i+0]=0.04+0.64*q;
+		rgba[4+i+1]=q-0.5;
+		rgba[4+i+2]=.19*q-.095;
+	}
+}
