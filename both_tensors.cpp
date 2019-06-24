@@ -793,7 +793,7 @@ namespace bru {
 
 		cl::Buffer RGBA_buffer(const double min, const double max)
 		{
-			if(m_type!=2) return cl::Buffer;
+			if(m_type!=2) return cl::Buffer();
 			cl::Buffer ret(*context, CL_MEM_READ_WRITE, 4*m_elems*sizeof(float));
 
 			k_to_rgba->setArg(0, ret);
@@ -1376,6 +1376,7 @@ int main()
 	double radius=0.5;
 	auto f=[](double x)->double{  return x*x>=0.25?0:exp(4+1/(x-0.5)-1/(x+0.5)); };
 	for(int i=0; i<len; i++) for(int j=0; j<len; j++) phi0[i][j]=f(sqrt(((i+0.5)*dx-0.5)*((i+0.5)*dx-0.5)+((j+0.5)*dx-0.5)*((j+0.5)*dx-0.5))/radius);
+	cout << phi0 << endl;
 	phi[0]=phi0;
 
 	/*
